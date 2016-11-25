@@ -74,13 +74,13 @@ void __attribute__ ((constructor)) libhook_main()
     // get a list of all loaded modules inside this process.
     ld_modules_t modules = libhook_get_modules();
 
-    HOOKLOG( "Found %u loaded modules.", modules.size() );
-    HOOKLOG( "Installing %u hooks.", NHOOKS );
+    HOOKLOG( "Found %zu loaded modules.", modules.size() );
+    HOOKLOG( "Installing %zu hooks.", NHOOKS );
 
     for( ld_modules_t::const_iterator i = modules.begin(), e = modules.end(); i != e; ++i ){
         // don't hook ourself :P
         if( i->name.find( "libhook.so" ) == std::string::npos ) {
-            HOOKLOG( "[0x%X] Hooking %s ...", i->address, i->name.c_str() );
+            HOOKLOG( "[0x%zX] Hooking %s ...", i->address, i->name.c_str() );
 
             for( size_t j = 0; j < NHOOKS; ++j ) {
                 unsigned tmp = libhook_addhook( i->name.c_str(), __hooks[j].name, __hooks[j].hook );
@@ -90,7 +90,7 @@ void __attribute__ ((constructor)) libhook_main()
                 if( __hooks[j].original == 0 && tmp != 0 ){
                     __hooks[j].original = (uintptr_t)tmp;
 
-                    HOOKLOG( "  %s - 0x%x -> 0x%x", __hooks[j].name, __hooks[j].original, __hooks[j].hook );
+                    HOOKLOG( "  %s - 0x%zx -> 0x%zx", __hooks[j].name, __hooks[j].original, __hooks[j].hook );
                 }
             }
         }

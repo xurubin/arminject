@@ -131,15 +131,15 @@ ld_modules_t libhook_get_modules() {
     return modules;
 }
 
-unsigned libhook_patch_address( unsigned addr, unsigned newval ) {
-    unsigned original = -1;
+unsigned libhook_patch_address( unsigned long addr, unsigned long newval ) {
+    unsigned long original = -1;
     size_t pagesize = sysconf(_SC_PAGESIZE);
     const void *aligned_pointer = (const void*)(addr & ~(pagesize - 1));
 
     mprotect(aligned_pointer, pagesize, PROT_WRITE | PROT_READ);
 
-    original = *(unsigned *)addr;
-    *((unsigned*)addr) = newval;
+    original = *(unsigned long*)addr;
+    *((unsigned long*)addr) = newval;
 
     mprotect(aligned_pointer, pagesize, PROT_READ);
 
@@ -185,7 +185,7 @@ unsigned libhook_addhook( const char *soname, const char *symbol, unsigned newva
     for( i = 0, rel = si->plt_rel; i < si->plt_rel_count; ++i, ++rel ) {
         unsigned type  = ELF32_R_TYPE(rel->r_info);
         unsigned sym   = ELF32_R_SYM(rel->r_info);
-        unsigned reloc = (unsigned)(rel->r_offset + si->load_bias);
+        unsigned long reloc = (unsigned long)(rel->r_offset + si->load_bias);
 
         if( sym_offset == sym ||
             strcmp(si->strtab + ((Elf32_Sym*)(si->symtab + sym))->st_name, symbol) == 0) {
@@ -207,7 +207,7 @@ unsigned libhook_addhook( const char *soname, const char *symbol, unsigned newva
     for( i = 0, rel = si->rel; i < si->rel_count; ++i, ++rel ) {
         unsigned type  = ELF32_R_TYPE(rel->r_info);
         unsigned sym   = ELF32_R_SYM(rel->r_info);
-        unsigned reloc = (unsigned)(rel->r_offset + si->load_bias);
+        unsigned long reloc = (unsigned long)(rel->r_offset + si->load_bias);
 
         if( sym_offset == sym ||
             strcmp(si->strtab + ((Elf32_Sym*)(si->symtab + sym))->st_name, symbol) == 0) {

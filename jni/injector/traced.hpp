@@ -41,8 +41,25 @@
 #include <string.h>
 #include <dlfcn.h>
 #include <stdarg.h>
+#include <sys/uio.h>
 
 #define CPSR_T_MASK ( 1u << 5 )
+
+#define NT_PRSTATUS 1
+#if defined(__aarch64__)
+typedef struct user_pt_regs PT_REGS;
+#define ARM_uregs regs
+#define ARM_r0 regs[0]
+#define ARM_lr regs[30]
+#define ARM_sp sp
+#define ARM_pc pc
+#define ARM_cpsr pstate
+#define LIBC_PATH "/system/lib64/libc.so"
+#else
+#define ARM_uregs uregs
+typedef struct pt_regs PT_REGS;
+#define LIBC_PATH "/system/lib/libc.so"
+#endif
 
 class Traced
 {
@@ -98,7 +115,6 @@ public:
         if(fp){
             fclose(fp);
         }
-
         return address;
     }
 
@@ -111,14 +127,16 @@ public:
 
         local_handle = findLibrary( library, getpid() );
         remote_handle = findLibrary( library );
-
+        if (!remote_handle) {
+            return NULL;
+        }
         return (void *)( (uintptr_t)local_addr + (uintptr_t)remote_handle - (uintptr_t)local_handle );
     }
 
     /*
      * Read 'blen' bytes from the remote process at 'addr' address.
      */
-    bool read( size_t addr, unsigned char *buf, size_t blen ){
+    bool read( uintptr_t addr, unsigned char *buf, size_t blen ){
         size_t i = 0;
         long ret = 0;
 
@@ -137,10 +155,10 @@ public:
     /*
      * Write 'blen' bytes to the remote process at 'addr' address.
      */
-    bool write( size_t addr, unsigned char *buf, size_t blen){
+    bool write( uintptr_t addr, unsigned char *buf, size_t blen){
         size_t i = 0;
         long ret;
-
+	printf("wrote %zu bytes to %zx\n", blen, addr);
         // make sure the buffer is word aligned
         char *ptr = (char *)calloc(blen + blen % sizeof(size_t), 1);
         memcpy(ptr, buf, blen);
@@ -164,11 +182,13 @@ public:
      */
     unsigned long call( void *function, int nargs, ... ) {
         int i = 0;
-        struct pt_regs regs = {{0}}, rbackup = {{0}};
-
+        struct iovec iov;
+        PT_REGS regs = {{0}}, rbackup = {{0}};
         // get registers and backup them
-        trace( PTRACE_GETREGS, 0, (size_t)&regs );
-        memcpy( &rbackup, &regs, sizeof(struct pt_regs) );
+        iov.iov_len = sizeof(regs);
+        iov.iov_base = &regs;
+        trace( PTRACE_GETREGSET, (void *) NT_PRSTATUS, (size_t)&iov );
+        memcpy( &rbackup, &regs, sizeof(PT_REGS) );
 
         va_list vl;
         va_start(vl,nargs);
@@ -178,19 +198,19 @@ public:
 
             // fill R0-R3 with the first 4 arguments
             if( i < 4 ){
-                regs.uregs[i] = arg;
+                regs.ARM_uregs[i] = arg;
             }
             // push remaining params onto stack
             else {
                 regs.ARM_sp -= sizeof(long) ;
-                write( (size_t)regs.ARM_sp, (uint8_t *)&arg, sizeof(long) );
+                write( regs.ARM_sp, (uint8_t *)&arg, sizeof(long) );
             }
         }
 
         va_end(vl);
 
         regs.ARM_lr = 0;
-        regs.ARM_pc = (long int)function;
+        regs.ARM_pc = (uintptr_t)function;
         // setup the current processor status register
         if ( regs.ARM_pc & 1 ){
             /* thumb */
@@ -203,16 +223,25 @@ public:
         }
 
         // do the call
-        trace( PTRACE_SETREGS, 0, (size_t)&regs );
-        trace( PTRACE_CONT );
-        waitpid( _pid, NULL, WUNTRACED );
+        iov.iov_len = sizeof(regs);
+        iov.iov_base = &regs;
+        trace( PTRACE_SETREGSET, (void*) NT_PRSTATUS, (size_t)&iov );
+        int stat = 0;
+        while (stat != 0xb7f) {
+            trace( PTRACE_CONT );
+            waitpid( _pid, &stat, WUNTRACED );
+        }
 
         // get registers again, R0 holds the return value
-        trace( PTRACE_GETREGS, 0, (size_t)&regs );
+        iov.iov_len = sizeof(regs);
+        iov.iov_base = &regs;
+        trace( PTRACE_GETREGSET, (void*) NT_PRSTATUS, (size_t)&iov );
 
         // restore original registers state
-        trace( PTRACE_SETREGS, 0, (size_t)&rbackup );
-
+        iov.iov_len = sizeof(rbackup);
+        iov.iov_base = &rbackup;
+        trace( PTRACE_SETREGSET, (void*) NT_PRSTATUS, (size_t)&iov );
+        printf("call %p returned %zx\n", function, (uintptr_t)regs.ARM_r0);
         return regs.ARM_r0;
     }
 
@@ -262,8 +291,8 @@ public:
             _dlopen  = findFunction( "/system/bin/linker", (void *)::dlopen );
             _dlsym   = findFunction( "/system/bin/linker", (void *)::dlsym );
             _dlerror = findFunction( "/system/bin/linker", (void *)::dlerror );
-            _calloc  = findFunction( "/system/lib/libc.so", (void *)::calloc );
-            _free    = findFunction( "/system/lib/libc.so", (void *)::free );
+            _calloc  = findFunction( LIBC_PATH, (void *)::calloc );
+            _free    = findFunction( LIBC_PATH, (void *)::free );
 
             if( !_calloc ){
                 fprintf( stderr, "Could not find calloc symbol.\n" );
